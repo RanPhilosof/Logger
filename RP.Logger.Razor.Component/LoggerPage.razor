@@ -1,0 +1,460 @@
+﻿@* @page "/logger" *@
+@using System.ComponentModel
+@using Microsoft.JSInterop
+@inject IJSRuntime JS
+
+@* <h3>Logger Level Management</h3> *@
+@* <button class="btn btn-secondary" @onclick="() => SetLoggerModalPosition(400, 100)">Set Modal Position</button> *@
+
+<button class="btn btn-primary" @onclick="OpenLoggerPopup">Loggers</button>
+
+@if (showLoggerPopup)
+{
+    <div id="loggerModal" class="modal d-block draggable-modal" style="z-index:1050; top:@modalTopPx; left:@modalLeftPx;"> @* width:@modalWidthPx !important; height:@modalHeightPx !important; max-width:none !important; max-height:none !important; *@
+        <div id="loggerModalDialog" class="modal-dialog" style="width: @modalWidthVw; max-width:none;">
+            <div id="loggerModalDialogContent" class="modal-content d-flex flex-column" style="height:@modalHeightVw; max-height:none;">
+
+                <div class="modal-header">
+                    <h5 class="modal-title">Logger Levels</h5>
+                    <button type="button" class="btn-close" @onclick="CloseLoggerPopup"></button>
+                </div>
+                <div class="modal-body flex-grow-1 overflow-auto">                
+                    
+<div class="position-relative mb-2">
+    <input class="form-control pe-5" placeholder="Filter by logger name..." @bind="filterText" @oninput="ApplyFilter" /> @* @bind="filterText" *@
+    @* @if (!string.IsNullOrWhiteSpace(filterText)) *@
+    @* { *@
+        <button type="button" class="btn btn-sm btn-outline-secondary clear-btn" 
+                @onclick="@(() => { filterText = string.Empty; ClearFilter(); })" 
+                style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); border: none; background: transparent;">
+            X
+        </button>
+    @* } *@
+</div>
+
+                    @* <input class="form-control mb-2" placeholder="Filter by logger name..." @bind="filterText" /> *@
+
+                    <div class="input-group mb-3">
+                        <select class="form-select" @bind="selectedBulkLevel">
+                            @foreach (var level in Enum.GetValues<LoggerLevel>())
+                            {
+                                <option value="@level">@level</option>
+                            }
+                        </select>
+                        <button class="btn btn-secondary" @onclick="ApplyBulkLevel">Apply to All</button>
+                    </div>
+
+                    <table class="table table-sm">
+                        <thead class="sticky-header">
+                            <tr>
+                                <th>App Name</th>
+                                <th>Logger Name</th>
+                                <th>Level</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var item in filteredLoggers)
+                            {
+                                <tr>
+                                    <td>@item.ApplicationName</td>
+                                    <td>@item.LoggerName</td>
+                                    <td>
+                                        <select class="form-select form-select-sm" @bind="item.Level">
+                                            @foreach (var level in Enum.GetValues<LoggerLevel>())
+                                            {
+                                                <option value="@level">@level</option>
+                                            }
+                                        </select>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="modal-footer d-flex justify-content-end">
+                    <button class="btn btn-secondary" @onclick="CloseLoggerPopup">Cancel</button>
+                    <button class="btn btn-primary" @onclick="ApplyChanges">Apply</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .sticky-header th {
+    position: sticky;
+    top: 0;
+    background-color: white;
+    z-index: 2;
+}
+
+/*     .draggable-modal {
+        position: fixed;
+        top: 120px;
+        left: 120px;
+        resize: both;
+        overflow: auto;
+        background-color: white;
+        z-index: 1050;
+    } */
+
+    .resizable-box {
+        resize: both;
+        overflow: auto;
+/*         min-height: 300px;
+        min-width: 100px; */
+    }
+
+    .modal-header {
+        cursor: move;
+    }
+
+    .modal-content {
+        display: flex;
+        flex-direction: column;
+        /* max-height: 90vh; */
+        resize: both; /* Enables manual resizing */
+        overflow: hidden;
+    }
+
+    .modal-body {
+        flex: 1 1 auto;
+        overflow: auto; /* Allows scrolling when content overflows */
+    }
+
+    .modal-footer {
+        padding: 0.75rem;
+        display: flex;
+        justify-content: flex-end;
+    }
+
+    .modal {
+        overflow: hidden; /* Prevents unwanted scrollbars */
+    }
+
+    /* .modal-dialog { */
+        /* height: auto; */
+        /* width: 100px; */
+        /* /* width: auto; */ */
+        /* max-width: 23vw; */
+        /* margin: auto; */
+    /* } */
+</style>
+
+<script>
+    window.dragData = window.dragData || null;
+
+
+    document.addEventListener('mousedown', function (e) {
+        if (e.target.closest('.modal-header')) {
+            const modal = e.target.closest('.draggable-modal');
+            dragData = {
+                element: modal,
+                offsetX: e.clientX - modal.offsetLeft,
+                offsetY: e.clientY - modal.offsetTop
+            };
+        }
+    });
+
+    document.addEventListener('mousemove', function (e) {
+        if (dragData) {
+            const { element, offsetX, offsetY } = dragData;
+            element.style.left = (e.clientX - offsetX) + 'px';
+            element.style.top = (e.clientY - offsetY) + 'px';
+        }
+    });
+
+    document.addEventListener('mouseup', () => dragData = null);
+</script>
+
+<script>
+    window.modalPositionCache = {};
+
+    window.modalPositionHelper = {
+        savePosition: function (id) {
+            const el = document.getElementById(id);
+            if (!el) return;
+
+            const rect = el.getBoundingClientRect();
+            window.modalPositionCache[id] = {
+                left: rect.left,
+                top: rect.top
+            };
+        },
+        setPosition: function (id) {
+            const pos = window.modalPositionCache[id];
+            const el = document.getElementById(id);
+            if (el && pos) {
+                el.style.position = "absolute";
+                el.style.left = pos.left + "px";
+                el.style.top = pos.top + "px";
+            }
+            console.log("Restoring modal position:", pos);
+        },
+        setPositionDirect: function (id, x, y) {
+                const el = document.getElementById(id);
+                if (!el) {
+                    console.warn(`setPositionDirect: Element with ID '${id}' not found.`);
+                    return;
+                }   
+
+                el.style.position = "absolute";
+                el.style.left = x + "px";
+                el.style.top = y + "px";
+        
+                console.log(`Position set for '${id}' to left: ${x}px, top: ${y}px`);
+        },
+        getPosition: function (id) {
+            const el = document.getElementById(id);
+            if (!el) {
+                console.warn(`getPosition: Element with ID '${id}' not found.`);
+                return null;
+            }
+
+            const rect = el.getBoundingClientRect();
+
+            console.log(`getPosition '${id}':`, rect);
+
+            return {
+                left: rect.left,
+                top: rect.top,
+                width: el.offsetWidth,
+                height: el.offsetHeight
+            }
+        },
+        getSizeInVw: function (id) {
+            const el = document.getElementById(id);
+            
+            if (!el) {
+                console.warn(`Element with ID '${id}' not found.`);
+                return null;
+            }
+
+            const rect = el.getBoundingClientRect();
+            const widthVw = (el.offsetWidth / window.innerWidth) * 100;
+            const heightVw = (el.offsetHeight / window.innerWidth) * 100;
+
+            console.log(`getSizeInVw '${id}':`, el);
+            console.log(`getSizeInVw '${id}':`, rect);
+
+            return {
+                widthVw: widthVw.toFixed(2) + 'vw',
+                heightVw: heightVw.toFixed(2) + 'vw'
+            }
+        },
+        exists: function (id) {
+            const el = document.getElementById(id);
+            return !!el;
+        }
+    };
+</script>
+
+<script>
+    window.consoleHelper = {
+        log: function (message) {
+            console.log("C# Log:", message);
+        },
+        warn: function (message) {
+            console.warn("C# Warn:", message);
+        },
+        error: function (message) {
+            console.error("C# Error:", message);
+        }
+    };
+</script>
+
+@code {
+
+    [Parameter] public Func<List<LoggerItem>>? GetLoggers { get; set; }
+    [Parameter] public Action<List<LoggerItem>>? SetLoggers { get; set; }
+
+
+    private string modalTopPx = "120px";
+    private string modalLeftPx = "120px";
+
+    private string modalWidthVw = "30vw";
+    private string modalHeightVw = "30vw";
+
+    private async Task LogToConsole(string message)
+    {
+        await JS.InvokeVoidAsync("consoleHelper.log", message);
+    }
+
+    private async Task SetLoggerModalPosition(int x, int y, string w, string h)
+    {
+        modalTopPx = $"{y}px";
+        modalLeftPx = $"{x}px";
+        modalWidthVw = w;
+        modalHeightVw = h;
+
+        showLoggerPopup = true;
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private bool showLoggerPopup = false;
+    private string filterText = "";
+    private LoggerLevel selectedBulkLevel = LoggerLevel.Info;
+
+    private List<LoggerItem> allLoggers = new();
+    private List<LoggerItem> filteredLoggers = new(); 
+
+    //=> allLoggers
+    //.Where(l => string.IsNullOrWhiteSpace(filterText) || l.LoggerName.Contains(filterText, StringComparison.OrdinalIgnoreCase))
+    //.ToList();
+
+    private void ClearFilter()
+    {
+        filterText = "";
+        filteredLoggers = allLoggers.ToList();
+        StateHasChanged();
+    }
+
+    private void ApplyFilter(ChangeEventArgs e)
+    {
+        string fT = filterText;
+        
+        if (e != null)
+            fT = e.Value?.ToString() ?? "";
+
+        // You can re-filter the loggers here based on the current `filterText`.
+        // Since you're already using LINQ to filter loggers, you can directly update the filtered list.
+        filteredLoggers = allLoggers
+            .Where(l => string.IsNullOrWhiteSpace(fT) || l.LoggerName.Contains(fT, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        
+        // Refresh the UI to show the filtered results.
+        StateHasChanged();
+    }
+
+    //private async Task ApplyPositionAsync()
+    //{        
+    //    await JS.InvokeVoidAsync("modalPositionHelper.setPosition", "loggerModal");
+    //}
+
+    private async Task<bool> IsLoggerModalPresent()
+    {
+        return await JS.InvokeAsync<bool>("modalPositionHelper.exists", "loggerModal");
+    }
+
+    private ModalPosition modalPosition = null;
+    private ModalWidthAndHeight modalWidthAndHeight= null;
+
+    private async Task SavePositionAsync()
+    {
+        var (res, res2) = await GetLoggerModalPosition();
+        if (res != null && res2 != null)
+        {
+            var mp = new ModalPosition();
+            var mwh = new ModalWidthAndHeight();
+
+            mp.Top = res.Top;
+            mp.Left = res.Left;
+
+            mwh.WidthVw= res2.WidthVw;
+            mwh.HeightVw = res2.HeightVw;
+
+            modalPosition = mp;
+            modalWidthAndHeight = mwh;
+        }
+    }
+
+    private async void OpenLoggerPopup()
+    {
+        allLoggers = GetLoggersInfo().Select(l => new LoggerItem
+            {
+                ApplicationName = l.ApplicationName,
+                LoggerName = l.LoggerName,
+                Level = l.Level
+            }).ToList();
+
+        ApplyFilter(null);
+
+        await InvokeAsync(StateHasChanged);
+
+        if (modalPosition != null && modalWidthAndHeight != null)
+        {
+            await SetLoggerModalPosition(
+                (int) modalPosition.Left, 
+                (int) modalPosition.Top,
+                modalWidthAndHeight.WidthVw,
+                modalWidthAndHeight.HeightVw);
+
+            await InvokeAsync(StateHasChanged);
+        }
+        else
+            showLoggerPopup = true;
+
+    }
+
+    private async void CloseLoggerPopup() 
+    { 
+        await SavePositionAsync();
+        showLoggerPopup = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void ApplyBulkLevel()
+    {
+        foreach (var item in filteredLoggers)
+            item.Level = selectedBulkLevel;
+    }
+
+    private async void ApplyChanges()
+    {
+        var currentLoggers = allLoggers.Select(l => new LoggerItem
+            {
+                ApplicationName = l.ApplicationName,
+                LoggerName = l.LoggerName,
+                Level = l.Level
+            }).ToList();
+
+        SetLoggers?.Invoke(currentLoggers);
+
+        await SavePositionAsync();
+
+        showLoggerPopup = false;
+        await InvokeAsync(StateHasChanged);        
+    }
+
+    private List<LoggerItem> GetLoggersInfo() 
+    {
+        var res = GetLoggers?.Invoke();
+
+        return res ?? new List<LoggerItem>();
+    }
+
+    public class LoggerItem
+    {
+        public string ApplicationName { get; set; }
+        public string LoggerName { get; set; }
+        public LoggerLevel Level { get; set; }
+    }
+
+    public enum LoggerLevel
+    {
+        None, All, Info, Warning, Debug, Error, Fatal
+    }
+
+
+    private async Task<Tuple<ModalPosition, ModalWidthAndHeight>> GetLoggerModalPosition()
+    {
+        var pos = await JS.InvokeAsync<ModalPosition>("modalPositionHelper.getPosition", "loggerModal");
+        var sizes = await JS.InvokeAsync<ModalWidthAndHeight>("modalPositionHelper.getSizeInVw", "loggerModalDialogContent");
+
+        return Tuple.Create(pos, sizes);
+    }
+
+    public class ModalPosition
+    {
+        public double Left { get; set; }
+        public double Top { get; set; }
+
+    }
+
+    public class ModalWidthAndHeight
+    {
+        public string WidthVw { get; set; }
+        public string HeightVw { get; set; }        
+    }
+}
