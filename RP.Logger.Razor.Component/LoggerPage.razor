@@ -6,7 +6,7 @@
 @* <h3>Logger Level Management</h3> *@
 @* <button class="btn btn-secondary" @onclick="() => SetLoggerModalPosition(400, 100)">Set Modal Position</button> *@
 
-<button class="btn btn-primary" @onclick="OpenLoggerPopup">Loggers</button>
+<button class="btn btn-primary" @onclick="OpenLoggerPopup" disabled="@isDisabled">Loggers</button>
 
 @if (showLoggerPopup)
 {
@@ -267,13 +267,21 @@
 
     [Parameter] public Func<List<LoggerItem>>? GetLoggers { get; set; }
     [Parameter] public Action<List<LoggerItem>>? SetLoggers { get; set; }
+    [Parameter] public bool IsDisabled { get; set; }
+    [Parameter] public EventCallback<bool> IsDisabledChanged { get; set; }
 
+    private bool isDisabled = true;
 
     private string modalTopPx = "120px";
     private string modalLeftPx = "120px";
 
-    private string modalWidthVw = "30vw";
+    private string modalWidthVw = "35vw";
     private string modalHeightVw = "30vw";
+
+    protected override void OnParametersSet()
+    {
+        isDisabled = IsDisabled;
+    }
 
     private async Task LogToConsole(string message)
     {
@@ -313,7 +321,7 @@
     private void ApplyFilter(ChangeEventArgs e)
     {
         string fT = filterText;
-        
+
         if (e != null)
             fT = e.Value?.ToString() ?? "";
 
@@ -322,7 +330,7 @@
         filteredLoggers = allLoggers
             .Where(l => string.IsNullOrWhiteSpace(fT) || l.LoggerName.Contains(fT, StringComparison.OrdinalIgnoreCase))
             .ToList();
-        
+
         // Refresh the UI to show the filtered results.
         StateHasChanged();
     }
@@ -360,8 +368,10 @@
     }
 
     private async void OpenLoggerPopup()
-    {
-        allLoggers = GetLoggersInfo().Select(l => new LoggerItem
+    {        
+        allLoggers = await GetLoggersInfo();
+        
+        allLoggers.Select(l => new LoggerItem
             {
                 ApplicationName = l.ApplicationName,
                 LoggerName = l.LoggerName,
@@ -417,11 +427,13 @@
         await InvokeAsync(StateHasChanged);        
     }
 
-    private List<LoggerItem> GetLoggersInfo() 
+    private async Task<List<LoggerItem>> GetLoggersInfo() 
     {
-        var res = GetLoggers?.Invoke();
-
-        return res ?? new List<LoggerItem>();
+        return await Task.Run(() =>
+        {
+            var res = GetLoggers?.Invoke();
+            return res ?? new List<LoggerItem>();
+        });
     }
 
     public class LoggerItem
